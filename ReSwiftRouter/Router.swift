@@ -99,16 +99,17 @@ open class Router<State: StateType>: StoreSubscriber {
 
     // MARK: Route Transformation Logic
 
-    static func largestCommonSubroute(_ oldRoute: Route, newRoute: Route) -> Int {
-            var largestCommonSubroute = -1
+    /// Find the last common sub route between two routes
+    static func largestCommonSubRouteElementIndex(_ oldRoute: Route, newRoute: Route) -> Int {
+            var largestCommonSubRouteElementIndex = -1
 
-            while largestCommonSubroute + 1 < newRoute.count &&
-                  largestCommonSubroute + 1 < oldRoute.count &&
-                  newRoute[largestCommonSubroute + 1] == oldRoute[largestCommonSubroute + 1] {
-                    largestCommonSubroute += 1
+            while largestCommonSubRouteElementIndex + 1 < newRoute.count &&
+                  largestCommonSubRouteElementIndex + 1 < oldRoute.count &&
+                  newRoute[largestCommonSubRouteElementIndex + 1] == oldRoute[largestCommonSubRouteElementIndex + 1] {
+                    largestCommonSubRouteElementIndex += 1
             }
 
-            return largestCommonSubroute
+            return largestCommonSubRouteElementIndex
     }
 
     // Maps Route index to Routable index. Routable index is offset by 1 because the root Routable
@@ -119,86 +120,126 @@ open class Router<State: StateType>: StoreSubscriber {
         return segment + 1
     }
 
-    static func routingActionsForTransitionFrom(_ oldRoute: Route,
-        newRoute: Route) -> [RoutingActions] {
+    /**
+     Build the list of actions required in order to proceed to the new route
 
-            var routingActions: [RoutingActions] = []
+     @param oldRoute The current route
+     @param newRoute The router to navigate to
+     @return The list of routing actions
+    */
+    static func routingActionsForTransitionFrom(_ oldRoute: Route, newRoute: Route) -> [RoutingActions] {
 
-            // Find the last common subroute between two routes
-            let commonSubroute = largestCommonSubroute(oldRoute, newRoute: newRoute)
+        // The actions (push, pop or change) required in order to proceed to the new route
+        var routingActions: [RoutingActions] = []
 
-            if commonSubroute == oldRoute.count - 1 && commonSubroute == newRoute.count - 1 {
-                return []
-            }
-            // Keeps track which element of the routes we are working on
-            // We start at the end of the old route
-            var routeBuildingIndex = oldRoute.count - 1
+        // Find the last common sub route between two routes
+        // -1 = no common
+        //  0 = the first element is common
+        //  1 = the 2 first elements are common
+        //  ...
+        let commonSubRouteLatestElementIndex = largestCommonSubRouteElementIndex(oldRoute, newRoute: newRoute)
+        let commonSubRouteElementsCount = commonSubRouteLatestElementIndex + 1
 
-            // Pop all route segments of the old route that are no longer in the new route
-            // Stop one element ahead of the commonSubroute. When we are one element ahead of the
-            // commmon subroute we have three options:
-            //
-            // 1. The old route had an element after the commonSubroute and the new route does not
-            //    we need to pop the route segment after the commonSubroute
-            // 2. The old route had no element after the commonSubroute and the new route does, we
-            //    we need to push the route segment(s) after the commonSubroute
-            // 3. The new route has a different element after the commonSubroute, we need to replace
-            //    the old route element with the new one
-            while routeBuildingIndex > commonSubroute + 1 {
-                let routeSegmentToPop = oldRoute[routeBuildingIndex]
+        // If the common sub route elements count is equal to
+        // the old route elements count and
+        // the new route elements count then
+        // it means there are no change of route. So no actions are required
+        if commonSubRouteElementsCount == oldRoute.count
+        && commonSubRouteElementsCount == newRoute.count {
+            return []
+        }
 
-                let popAction = RoutingActions.pop(
-                    responsibleRoutableIndex: routableIndexForRouteSegment(routeBuildingIndex - 1),
-                    segmentToBePopped: routeSegmentToPop
-                )
+        // Keeps track which element of the routes we are working on
+        // We start at the last element of the old route
+        var routeBuildingIndex = oldRoute.count - 1
 
-                routingActions.append(popAction)
-                routeBuildingIndex -= 1
-            }
+        // Pop all route segments of the old route that are no longer in the new route
+        // Stop one element ahead of the commonSubRoute. When we are one element ahead of the
+        // common sub route we have three options:
+        //
+        // 1. The old route had an element after the commonSubRoute and the new route does not
+        //    we need to pop the route segment after the commonSubRoute
+        // 2. The old route had no element after the commonSubRoute and the new route does,
+        //    we need to push the route segment(s) after the commonSubRoute
+        // 3. The new route has a different element after the commonSubRoute, we need to replace
+        //    the old route element with the new one
+        //
+        // Example:
+        //    oldRoute:                      [home, details, help]
+        //    newRoute:                      [home]
+        //    commonSubRouteElementIndex:    0
+        //    routeBuildingIndex:            2
+        //
+        // In the previous example, only "help" will be pop because we stop one element
+        // ahead of the commonSubRoute
+        //
+        while routeBuildingIndex > commonSubRouteLatestElementIndex + 1 {
+            let routeSegmentToPop = oldRoute[routeBuildingIndex]
 
-            // This is the 1. case:
-            // "The old route had an element after the commonSubroute and the new route does not
-            //  we need to pop the route segment after the commonSubroute"
-            if oldRoute.count > newRoute.count {
-                let popAction = RoutingActions.pop(
-                    responsibleRoutableIndex: routableIndexForRouteSegment(routeBuildingIndex - 1),
-                    segmentToBePopped: oldRoute[routeBuildingIndex]
-                )
+            let popAction = RoutingActions.pop(
+                responsibleRoutableIndex: routableIndexForRouteSegment(routeBuildingIndex - 1),
+                segmentToBePopped: routeSegmentToPop
+            )
 
-                routingActions.append(popAction)
-                routeBuildingIndex -= 1
-            }
-            // This is the 3. case:
-            // "The new route has a different element after the commonSubroute, we need to replace
-            //  the old route element with the new one"
-            else if oldRoute.count > (commonSubroute + 1) && newRoute.count > (commonSubroute + 1) {
-                let changeAction = RoutingActions.change(
-                    responsibleRoutableIndex: routableIndexForRouteSegment(commonSubroute),
-                    segmentToBeReplaced: oldRoute[commonSubroute + 1],
-                    newSegment: newRoute[commonSubroute + 1])
+            routingActions.append(popAction)
+            routeBuildingIndex -= 1
+        }
 
-                routingActions.append(changeAction)
-            }
+        // This is the 1. case:
+        // "The old route had an element after the commonSubRoute and the new route does not
+        //  we need to pop the route segment after the commonSubRoute"
+        if oldRoute.count > newRoute.count {
+            let popAction = RoutingActions.pop(
+                responsibleRoutableIndex: routableIndexForRouteSegment(routeBuildingIndex - 1),
+                segmentToBePopped: oldRoute[routeBuildingIndex]
+            )
 
-            // Push remainder of elements in new Route that weren't in old Route, this covers
-            // the 2. case:
-            // "The old route had no element after the commonSubroute and the new route does,
-            //  we need to push the route segment(s) after the commonSubroute"
-            let newRouteIndex = newRoute.count - 1
+            routingActions.append(popAction)
+            routeBuildingIndex -= 1
+        }
+        // This is the 3. case:
+        // "The new route has a different element after the commonSubRoute, we need to replace
+        //  the old route element with the new one"
+        // 
+        // Example 1:
+        //    oldRoute:                     [home, details]
+        //    newRoute:                     [home, help]
+        //    commonSubRouteElementIndex:   0
+        // Example 2:
+        //    oldRoute:                     [details]
+        //    newRoute:                     [help]
+        //    commonSubRouteElementIndex:   -1
+        //
+        else if oldRoute.count > (commonSubRouteLatestElementIndex + 1)
+             && newRoute.count > (commonSubRouteLatestElementIndex + 1) {
 
-            while routeBuildingIndex < newRouteIndex {
-                let routeSegmentToPush = newRoute[routeBuildingIndex + 1]
+            let changeAction = RoutingActions.change(
+                responsibleRoutableIndex: routableIndexForRouteSegment(commonSubRouteLatestElementIndex), // Ex1 : home
+                segmentToBeReplaced: oldRoute[commonSubRouteLatestElementIndex + 1], // Ex1 : details
+                newSegment: newRoute[commonSubRouteLatestElementIndex + 1]) // Ex1 : help
 
-                let pushAction = RoutingActions.push(
-                    responsibleRoutableIndex: routableIndexForRouteSegment(routeBuildingIndex),
-                    segmentToBePushed: routeSegmentToPush
-                )
+            routingActions.append(changeAction)
+        }
 
-                routingActions.append(pushAction)
-                routeBuildingIndex += 1
-            }
+        // Push elements from new Route that weren't in old Route, this covers
+        // the 2. case:
+        // "The old route had no element after the commonSubRoute and the new route does,
+        //  we need to push the route segment(s) after the commonSubRoute"
+        let newRouteIndex = newRoute.count - 1
 
-            return routingActions
+        while routeBuildingIndex < newRouteIndex {
+            let routeSegmentToPush = newRoute[routeBuildingIndex + 1]
+
+            let pushAction = RoutingActions.push(
+                responsibleRoutableIndex: routableIndexForRouteSegment(routeBuildingIndex),
+                segmentToBePushed: routeSegmentToPush
+            )
+
+            routingActions.append(pushAction)
+            routeBuildingIndex += 1
+        }
+
+        return routingActions
     }
 
 }
